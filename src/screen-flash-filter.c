@@ -22,6 +22,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <obs.h>
 #include <util/platform.h>
 
+#define MAX_COLOR_TARGETS 20 // Maximum number of color targets
+
 struct screen_flash_filter_data {
     obs_source_t *context;
 
@@ -45,7 +47,8 @@ struct screen_flash_filter_data {
     gs_texture_t *oldTex5;
 
     float threshold1;
-    struct vec4 colorTarget;
+    struct vec4 colorTargets[MAX_COLOR_TARGETS]; // Array to hold multiple color targets
+    int num_colorTargets; // Number of active color targets
 
     bool processed_frame;
     bool firstRun;
@@ -71,11 +74,18 @@ static void screen_flash_filter_update(void *data, obs_data_t *settings)
     filter->cx = cx;
     filter->cy = cy;
 
-    double threshold1 = obs_data_get_double(settings, "threshold1");
-    filter->threshold1 = (float)threshold1;
+    filter->threshold1 = (float)obs_data_get_double(settings, "threshold1");
 
-    uint32_t CT = (uint32_t)obs_data_get_int(settings, "colorTarget");
-    vec4_from_rgba(&filter->colorTarget, CT);
+    // Parse multiple color targets
+    for (int i = 0; i < MAX_COLOR_TARGETS; i++) {
+        char setting_name[32];
+        snprintf(setting_name, sizeof(setting_name), "colorTarget%d", i + 1);
+
+        uint32_t color = (uint32_t)obs_data_get_int(settings, setting_name);
+        vec4_from_rgba(&filter->colorTargets[i], color);
+    }
+
+    filter->num_colorTargets = MAX_COLOR_TARGETS; // Set the number of targets
 }
 
 static void free_textures(struct screen_flash_filter_data *f)
@@ -194,8 +204,16 @@ static void screen_flash_filter_render(void *data, gs_effect_t *effect)
     param = gs_effect_get_param_by_name(filter->effect, "threshold1");
     gs_effect_set_float(param, filter->threshold1);
 
-    param = gs_effect_get_param_by_name(filter->effect, "colorTarget");
-    gs_effect_set_vec4(param, &filter->colorTarget);
+    // Pass multiple color targets to the effect
+    for (int i = 0; i < filter->num_colorTargets; i++) {
+        char param_name[32];
+        snprintf(param_name, sizeof(param_name), "colorTarget%d", i + 1);
+
+        param = gs_effect_get_param_by_name(filter->effect, param_name);
+        if (param) {
+            gs_effect_set_vec4(param, &filter->colorTargets[i]);
+        }
+    }
 
     obs_source_process_filter_end(filter->context, filter->effect, 0, 0);
 
@@ -249,8 +267,18 @@ static obs_properties_t *screen_flash_filter_properties(void *data)
 {
     obs_properties_t *props = obs_properties_create();
 
-    obs_properties_add_color(props, "colorTarget", "Flash color to filter");
     obs_properties_add_float_slider(props, "threshold1", "Threshold (Usually between .10 and .30)", 0.0f, 0.3f, 0.01f);
+
+    // Add properties for multiple color targets
+    for (int i = 0; i < MAX_COLOR_TARGETS; i++) {
+        char property_name[32];
+        snprintf(property_name, sizeof(property_name), "colorTarget%d", i + 1);
+
+        char description[64];
+        snprintf(description, sizeof(description), "Color Target %d", i + 1);
+
+        obs_properties_add_color(props, property_name, description);
+    }
 
     UNUSED_PARAMETER(data);
     return props;
@@ -272,7 +300,13 @@ static void screen_flash_filter_defaults(obs_data_t *settings)
     */
 
     obs_data_set_default_double(settings, "threshold1", 0.1);
-    obs_data_set_default_int(settings, "colorTarget", 0xFFFFFFFF);
+
+    for (int i = 0; i < MAX_COLOR_TARGETS; i++) {
+        char setting_name[32];
+        snprintf(setting_name, sizeof(setting_name), "colorTarget%d", i + 1);
+
+        obs_data_set_default_int(settings, setting_name, 0xFFFFFFFF); // Default to white
+    }
 }
 
 struct obs_source_info screen_flash_filter = {.id = "screen_flash_filter",
